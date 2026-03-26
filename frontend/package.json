@@ -1,0 +1,32 @@
+{
+  "name": "codeshield",
+  "displayName": "CodeShield – AI Secure Coding Assistant",
+  "description": "Real-time vulnerability detection powered by AI",
+  "version": "0.1.0",
+  "publisher": "codeshield-team",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeshield.analyze",
+        "title": "CodeShield: Analyze Current File"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
