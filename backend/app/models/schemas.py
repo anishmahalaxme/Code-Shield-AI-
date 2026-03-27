@@ -9,6 +9,32 @@ class AnalyzeRequest(BaseModel):
     language: str  # "javascript" | "python" | anything else
 
 
+class FixRequest(BaseModel):
+    code_snippet: str
+    language: str
+    issue_type: str
+    message: str
+
+
+class SimulateRequest(BaseModel):
+    vuln_type: str
+    payload: str
+    code_snippet: str
+    language: str
+
+
+class FixResponse(BaseModel):
+    fixed_code: str
+
+
+class SimulateResponse(BaseModel):
+    query: str
+    attack_result: str
+    attack_class: str
+    impact: str
+    is_attack: bool
+
+
 # ── Sub-models ────────────────────────────────────────────────────────────────
 
 class Simulation(BaseModel):

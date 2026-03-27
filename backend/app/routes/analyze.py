@@ -14,9 +14,14 @@ from fastapi import APIRouter
 from app.models.schemas import (
     AnalyzeRequest, AnalyzeResponse,
     Issue, Simulation, AIPlaceholder,
+    FixRequest, FixResponse,
+    SimulateRequest, SimulateResponse
 )
 from app.services.scanner import run_scan, SUPPORTED_LANGUAGES
 from app.services.simulator import get_simulation
+from app.services.gemini_ai import (
+    get_ai_explanation, get_ai_fix_code, get_ai_simulation_result
+)
 
 router = APIRouter()
 
@@ -110,6 +115,15 @@ def analyze(request: AnalyzeRequest):
     enriched: list[Issue] = []
     for raw in raw_issues:
         sim_data = get_simulation(raw["type"])
+
+        # Live Gemini explanation — falls back silently on any error
+        ai_data = get_ai_explanation(
+            vuln_type=raw["type"],
+            code_snippet=raw.get("code_snippet", ""),
+            message=raw["message"],
+            language=lang,
+        )
+
         enriched.append(Issue(
             id=raw["id"],
             type=raw["type"],
@@ -119,7 +133,7 @@ def analyze(request: AnalyzeRequest):
             message=raw["message"],
             code_snippet=raw["code_snippet"],
             simulation=Simulation(**sim_data),
-            ai=AI_MOCKS.get(raw["type"], DEFAULT_AI),
+            ai=AIPlaceholder(**ai_data),
         ))
 
     # ── Score ─────────────────────────────────────────────────────────────────
@@ -129,3 +143,31 @@ def analyze(request: AnalyzeRequest):
     score = max(0, score)
 
     return AnalyzeResponse(issues=enriched, score=score)
+
+
+@router.post("/fix", response_model=FixResponse)
+def fix(request: FixRequest):
+    """
+    Endpoint to trigger an automated code replacement fix using the Groq AI engine.
+    """
+    fixed_code = get_ai_fix_code(
+        vuln_type=request.issue_type,
+        code_snippet=request.code_snippet,
+        message=request.message,
+        language=request.language
+    )
+    return FixResponse(fixed_code=fixed_code)
+
+
+@router.post("/simulate", response_model=SimulateResponse)
+def simulate(request: SimulateRequest):
+    """
+    Endpoint to trigger a dynamic AI-powered security simulation for a specific payload.
+    """
+    res = get_ai_simulation_result(
+        vuln_type=request.vuln_type,
+        payload=request.payload,
+        code_snippet=request.code_snippet,
+        language=request.language
+    )
+    return SimulateResponse(**res)

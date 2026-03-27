@@ -65,6 +65,11 @@ DANGEROUS_ATTRS = {"href", "src", "action", "formaction", "data", "onclick",
 SINK_JQUERY = {"html", "append", "prepend", "after", "before", "replaceWith",
                "wrap", "wrapInner"}
 
+# Express / Node server-side reflected XSS sinks
+# res.send(taint), res.write(taint), res.end(taint), res.json(taint)
+SINK_RES_METHODS = {"send", "write", "end", "json"}
+SINK_RES_ROOTS   = {"res", "response", "resp"}
+
 # ── Regex fallback (covers dangerouslySetInnerHTML + basic cases) ─────────────
 FALLBACK_PATTERNS = [
     (r'\.innerHTML\s*=\s*(?!["\'])',
@@ -79,6 +84,9 @@ FALLBACK_PATTERNS = [
         "eval() executes a variable as code — never use with user input."),
     (r'(setTimeout|setInterval)\s*\(\s*(?!["\'\(])',
         "Timer called with a variable string executes arbitrary code."),
+    # Server-side reflected XSS (Express / Node)
+    (r'\bres\s*\.\s*(send|write|end)\s*\(\s*[`"].*\$\{',
+        "res.send/write() with a template literal containing user input — reflected XSS."),
 ]
 
 
@@ -257,6 +265,38 @@ def _detect_js_ast(code: str) -> List[Dict]:
                 _add(line, _conf(args[0]),
                      f"jQuery .{fn}() with tainted input renders raw HTML — equivalent to innerHTML.",
                      f"jquery.{fn}")
+
+            # Express server-side: res.send(`<h1>${userInput}</h1>`) etc.
+            if (callee.type == "MemberExpression"
+                    and hasattr(callee.property, "name")
+                    and callee.property.name in SINK_RES_METHODS
+                    and args):
+                root = _root_name(callee.object) if callee.object else ""
+                if root in SINK_RES_ROOTS:
+                    first = args[0]
+                    # Template literal with tainted expression
+                    if first.type == "TemplateLiteral":
+                        for expr in (first.expressions or []):
+                            if is_seed_source(expr):
+                                fn = callee.property.name
+                                _add(line, "HIGH",
+                                     f"res.{fn}() sends a template literal containing direct user input as HTML — "
+                                     f"reflected XSS: attacker can inject scripts that execute in the victim's browser.",
+                                     f"res.{fn}-template-direct")
+                                break
+                            elif references_tainted(expr, tainted):
+                                fn = callee.property.name
+                                _add(line, "MEDIUM",
+                                     f"res.{fn}() sends a template literal with tainted data as HTML — "
+                                     f"reflected XSS risk.",
+                                     f"res.{fn}-template-tainted")
+                                break
+                    # Concatenation: res.send('<h1>' + userInput + '</h1>')
+                    elif first.type == "BinaryExpression" and _tainted(first):
+                        fn = callee.property.name
+                        _add(line, _conf(first),
+                             f"res.{fn}() concatenates user input into the HTTP response — reflected XSS.",
+                             f"res.{fn}-concat")
 
     walk(tree, visit)
     return issues

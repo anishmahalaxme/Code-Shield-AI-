@@ -18,6 +18,11 @@ def run_scan(code: str, language: str) -> List[Dict]:
     Returns combined list of raw issues.
     """
     lang = language.lower()
+    
+    # Map React/TypeScript to JavaScript for AST parsing
+    if lang in ["typescript", "ts", "tsx", "jsx", "javascriptreact", "typescriptreact"]:
+        lang = "javascript"
+
     raw: List[Dict] = []
 
     if lang not in SUPPORTED_LANGUAGES:

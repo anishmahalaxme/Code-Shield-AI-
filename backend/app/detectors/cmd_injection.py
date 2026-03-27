@@ -78,6 +78,31 @@ PY_PATTERNS = [
      "os.popen() with user-controlled input — command injection risk.", "HIGH"),
 ]
 
+# ── JavaScript regex fallback patterns ───────────────────────────────────────
+# Catches cases where AST taint propagation does not reach the sink
+JS_PATTERNS = [
+    # exec/execSync with template literal
+    (r'\bexec\s*\(\s*`[^`]*\$\{',
+     "exec() called with a template literal — user input inside ${...} enables command injection.", "HIGH"),
+    (r'\bexecSync\s*\(\s*`[^`]*\$\{',
+     "execSync() called with a template literal — user input inside ${...} enables command injection.", "HIGH"),
+    # exec/execSync with string concat
+    (r'\bexec\s*\(\s*["\'].*\+',
+     "exec() called with concatenated string — attacker can inject OS commands.", "HIGH"),
+    # child_process.exec / cp.exec with template literal
+    (r'\.exec\s*\(\s*`[^`]*\$\{',
+     ".exec() called with a template literal containing a variable — command injection risk.", "HIGH"),
+    # spawn with tainted command
+    (r'\bspawn\s*\(\s*(?:req\.|request\.|userInput|user_input|input|payload)',
+     "spawn() called with user-controlled command — command injection risk.", "HIGH"),
+    # os.system via shell=True in node (shelljs etc.)
+    (r'shell\.exec\s*\(\s*`[^`]*\$\{',
+     "shell.exec() with template literal — user input inside ${...} enables command injection.", "HIGH"),
+    # generic: any req.* passed to exec-like
+    (r'exec\s*\(.*req\.',
+     "exec() called with a value from the HTTP request — command injection risk.", "HIGH"),
+]
+
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
 
@@ -88,12 +113,12 @@ def _real_snippet(code: str, line: int) -> str:
 
 def _detect_js_ast(code: str) -> List[Dict]:
     if not ESPRIMA_AVAILABLE:
-        return _detect_python_regex(code)
+        return _detect_js_regex(code)
 
     try:
         tree = esprima.parseScript(code, tolerant=True, loc=True)
     except Exception:
-        return _detect_python_regex(code)
+        return _detect_js_regex(code)
 
     tainted, _ = build_taint_set(tree)
     issues: List[Dict] = []
@@ -178,16 +203,45 @@ def _detect_js_ast(code: str) -> List[Dict]:
         if (callee.type == "Identifier"
                 and callee.name in CP_EXEC_METHODS | CP_SPAWN_METHODS
                 and args and _tainted_template_or_concat(args[0])):
-            _add(line, "HIGH" if is_seed_source(args[0]) else "MEDIUM",
+            _add(line, "HIGH" if any(is_seed_source(e) for e in (args[0].expressions or [args[0]])) else "MEDIUM",
                  f"{callee.name}() called with user-controlled input —"
                  " shell command injection risk (use execFile with arg arrays instead).",
                  callee.name)
 
     walk(tree, visit)
+
+    # If AST found nothing, run regex fallback on the same JS code
+    if not issues:
+        issues = _detect_js_regex(code)
+
     return issues
 
 
-# ── Python regex detection ────────────────────────────────────────────────────
+# ── JavaScript regex fallback ─────────────────────────────────────────────────
+
+def _detect_js_regex(code: str) -> List[Dict]:
+    issues: List[Dict] = []
+    seen: Set[tuple] = set()
+    for line_num, line in enumerate(code.splitlines(), start=1):
+        s = line.strip()
+        if not s or s.startswith("//"):
+            continue
+        for pattern, message, severity in JS_PATTERNS:
+            if re.search(pattern, line, re.IGNORECASE):
+                key = (line_num, "COMMAND_INJECTION")
+                if key not in seen:
+                    seen.add(key)
+                    issues.append({
+                        "type": "COMMAND_INJECTION",
+                        "line": line_num,
+                        "severity": severity,
+                        "confidence": "HIGH",
+                        "message": f"{message} (confidence: HIGH)",
+                        "code_snippet": s,
+                    })
+                break
+    return issues
+
 
 def _detect_python_regex(code: str) -> List[Dict]:
     issues: List[Dict] = []

@@ -1,0 +1,23 @@
+# Node.js
+node_modules/
+dist/
+out/
+build/
+.vscode-test/
+*.vsix
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# MacOS
+.DS_Store
+
+# Git
+.git/

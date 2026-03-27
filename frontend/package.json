@@ -4,17 +4,59 @@
   "description": "Real-time vulnerability detection powered by AI",
   "version": "0.1.0",
   "publisher": "codeshield-team",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Linters", "Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python",
+    "onLanguage:java",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:csharp",
+    "onLanguage:go",
+    "onLanguage:php",
+    "onLanguage:ruby",
+    "onLanguage:sql",
+    "onLanguage:html"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "codeshield.analyze",
-        "title": "CodeShield: Analyze Current File"
+        "title": "Run CodeShield Scan"
+      },
+      {
+        "command": "codeshield.applyFix",
+        "title": "⚡ Auto-Fix Code"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codeshield-container",
+          "title": "CodeShield",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "codeshield-container": [
+        {
+          "type": "webview",
+          "id": "codeshield.sidebar",
+          "name": "CodeShield Security",
+          "icon": "media/shield.svg"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

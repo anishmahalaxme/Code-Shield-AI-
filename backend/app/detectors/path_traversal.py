@@ -90,6 +90,30 @@ PY_PATTERNS = [
      "shutil function called with user input — arbitrary file access/destruction.", "HIGH"),
 ]
 
+# ── JavaScript regex fallback patterns ───────────────────────────────────────
+JS_PATTERNS = [
+    # fs.readFile / readFileSync with template literal or concat
+    (r'\bfs\.read(?:File|FileSync)\s*\([^,)]*[+`]',
+     "fs.readFile() called with a dynamic path — path traversal risk.", "HIGH"),
+    (r'\bfs\.readFileSync\s*\([^,)]*[+`]',
+     "fs.readFileSync() called with a dynamic path — attacker can read arbitrary files.", "HIGH"),
+    # fs.writeFile with template literal or concat
+    (r'\bfs\.write(?:File|FileSync)\s*\([^,)]*[+`]',
+     "fs.writeFile() called with a dynamic path — attacker can write to arbitrary files.", "HIGH"),
+    # path.join with req.* / user input
+    (r'path\.(?:join|resolve)\s*\(.*(?:req\.|request\.|userInput|user_input|input|param)',
+     "path.join/resolve() uses user-controlled input — ../ traversal can escape the base dir.", "MEDIUM"),
+    # res.sendFile with dynamic path
+    (r'res\.(?:sendFile|download)\s*\([^)]*(?:req\.|\$\{|\+)',
+     "res.sendFile/download() with user-controlled path — serves arbitrary files to the client.", "HIGH"),
+    # Generic: fs.* with req.* in args
+    (r'\bfs\.\w+\s*\(.*req\.',
+     "fs filesystem method called with a value from the HTTP request — path traversal risk.", "HIGH"),
+    # readFileSync with req body/query/params
+    (r'readFileSync\s*\(.*(?:req\.body|req\.query|req\.params)',
+     "readFileSync() uses HTTP request data as path — directory traversal vulnerability.", "HIGH"),
+]
+
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
 
@@ -100,12 +124,12 @@ def _real_snippet(code: str, line: int) -> str:
 
 def _detect_js_ast(code: str) -> List[Dict]:
     if not ESPRIMA_AVAILABLE:
-        return _detect_python_regex(code)
+        return _detect_js_regex(code)
 
     try:
         tree = esprima.parseScript(code, tolerant=True, loc=True)
     except Exception:
-        return _detect_python_regex(code)
+        return _detect_js_regex(code)
 
     tainted, _ = build_taint_set(tree)
     issues: List[Dict] = []
@@ -190,10 +214,39 @@ def _detect_js_ast(code: str) -> List[Dict]:
                  "URL")
 
     walk(tree, visit)
+
+    # If AST found nothing, run JS regex fallback
+    if not issues:
+        issues = _detect_js_regex(code)
+
     return issues
 
 
-# ── Python regex detection ────────────────────────────────────────────────────
+# ── JavaScript regex fallback ─────────────────────────────────────────────────
+
+def _detect_js_regex(code: str) -> List[Dict]:
+    issues: List[Dict] = []
+    seen: Set[tuple] = set()
+    for line_num, line in enumerate(code.splitlines(), start=1):
+        s = line.strip()
+        if not s or s.startswith("//"):
+            continue
+        for pattern, message, severity in JS_PATTERNS:
+            if re.search(pattern, line, re.IGNORECASE):
+                key = (line_num, "PATH_TRAVERSAL")
+                if key not in seen:
+                    seen.add(key)
+                    issues.append({
+                        "type": "PATH_TRAVERSAL",
+                        "line": line_num,
+                        "severity": severity,
+                        "confidence": "HIGH",
+                        "message": f"{message} (confidence: HIGH)",
+                        "code_snippet": s,
+                    })
+                break
+    return issues
+
 
 def _detect_python_regex(code: str) -> List[Dict]:
     issues: List[Dict] = []
