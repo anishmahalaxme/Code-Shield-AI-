@@ -2,7 +2,6 @@
 
 > **Real-time vulnerability detection, automated patching, and interactive exploit simulations inside VS Code—powered by Groq AI.**
 
-![CodeShield Banner](frontend/media/icon.png)
 
 CodeShield is a next-generation AI security assistant integrated directly into your editor. Stop vulnerabilities before they reach production with blazingly fast, context-aware AI analysis that acts as your personal AppSec engineer.
 
