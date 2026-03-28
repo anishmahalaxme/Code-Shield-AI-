@@ -106,6 +106,31 @@ def references_tainted(node, tainted: Set[str]) -> bool:
     return False
 
 
+def _pattern_binding_names(pattern) -> list:
+    """Extract Identifier names bound by an ObjectPattern or ArrayPattern (shallow)."""
+    names: list = []
+    if pattern is None or not hasattr(pattern, "type"):
+        return names
+    if pattern.type == "Identifier":
+        return [pattern.name]
+    if pattern.type == "ObjectPattern":
+        for prop in pattern.properties or []:
+            val = getattr(prop, "value", None)
+            if val and val.type == "Identifier":
+                names.append(val.name)
+            elif val and val.type in ("ObjectPattern", "ArrayPattern"):
+                names.extend(_pattern_binding_names(val))
+    elif pattern.type == "ArrayPattern":
+        for el in pattern.elements or []:
+            if el is None:
+                continue
+            if el.type == "Identifier":
+                names.append(el.name)
+            elif el.type in ("ObjectPattern", "ArrayPattern"):
+                names.extend(_pattern_binding_names(el))
+    return names
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def build_taint_set(tree) -> Tuple[Set[str], Dict[str, str]]:
@@ -142,10 +167,16 @@ def build_taint_set(tree) -> Tuple[Set[str], Dict[str, str]]:
     # ── Pass 2: Direct seed assignments ───────────────────────────────────────
     def collect_seeds(node):
         # const id = req.params.id / userInput
+        # const { username, password } = req.body  (destructuring from request body)
         if node.type == "VariableDeclarator" and node.init is not None:
-            if node.id.type == "Identifier" and is_seed_source(node.init):
-                tainted.add(node.id.name)
-                confidence[node.id.name] = "HIGH"
+            if is_seed_source(node.init):
+                if node.id.type == "Identifier":
+                    tainted.add(node.id.name)
+                    confidence[node.id.name] = "HIGH"
+                elif node.id.type in ("ObjectPattern", "ArrayPattern"):
+                    for name in _pattern_binding_names(node.id):
+                        tainted.add(name)
+                        confidence[name] = "HIGH"
 
         # id = req.params.id  (plain assignment, not declaration)
         if node.type == "AssignmentExpression" and node.operator == "=":

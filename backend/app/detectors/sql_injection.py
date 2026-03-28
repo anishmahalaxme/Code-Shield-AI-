@@ -18,12 +18,7 @@ Detects SQL Injection vulnerabilities.
 import re
 from typing import List, Dict, Set
 
-try:
-    import esprima
-    ESPRIMA_AVAILABLE = True
-except ImportError:
-    ESPRIMA_AVAILABLE = False
-
+from app.detectors.js_parse import parse_js
 from app.detectors.taint import build_taint_set, walk, references_tainted, is_seed_source
 
 
@@ -49,6 +44,17 @@ def _is_sql_string(node) -> bool:
     return False
 
 
+def _template_quasis_sql_text(node) -> str:
+    """Lowercased text from TemplateLiteral static segments (for SQL keyword match)."""
+    chunks = []
+    for q in node.quasis or []:
+        val = getattr(q, "value", None)
+        if val is None:
+            continue
+        chunks.append(getattr(val, "cooked", None) or getattr(val, "raw", None) or "")
+    return "".join(chunks).lower()
+
+
 def _real_snippet(code: str, line: int) -> str:
     """Return the actual source line for display — realistic and demo-ready."""
     lines = code.splitlines()
@@ -57,14 +63,43 @@ def _real_snippet(code: str, line: int) -> str:
     return f"(line {line})"
 
 
-def _detect_js_ast(code: str) -> List[Dict]:
-    if not ESPRIMA_AVAILABLE:
-        return _detect_python_regex(code)  # fallback
+def _detect_js_sql_heuristic(code: str) -> List[Dict]:
+    """Last-resort line scan when esprima is missing or cannot parse the file."""
+    issues: List[Dict] = []
+    seen: Set[tuple] = set()
+    for line_num, line in enumerate(code.splitlines(), start=1):
+        s = line.strip()
+        if not s or s.startswith("//") or s.startswith("/*") or s.startswith("*"):
+            continue
+        low = line.lower()
+        if not any(kw in low for kw in SQL_KEYWORDS):
+            continue
+        risky = "${" in line or re.search(
+            r"['\"\`].*\b(?:select|insert|update|delete)\b.*['\"\`]\s*\+", low
+        )
+        if not risky:
+            continue
+        key = (line_num, "SQL_INJECTION")
+        if key not in seen:
+            seen.add(key)
+            issues.append({
+                "type": "SQL_INJECTION",
+                "line": line_num,
+                "severity": "HIGH",
+                "confidence": "LOW",
+                "message": (
+                    "Possible SQL injection — query text is mixed with dynamic data "
+                    "(heuristic; AST unavailable or unparsable). Use parameterized queries."
+                ),
+                "code_snippet": s,
+            })
+    return issues
 
-    try:
-        tree = esprima.parseScript(code, tolerant=True, loc=True)
-    except Exception:
-        return _detect_python_regex(code)  # fallback if AST parse fails
+
+def _detect_js_ast(code: str) -> List[Dict]:
+    tree = parse_js(code)
+    if tree is None:
+        return _detect_js_sql_heuristic(code)
 
     # Build taint set before detection pass
     tainted, _ = build_taint_set(tree)
@@ -111,6 +146,24 @@ def _detect_js_ast(code: str) -> List[Dict]:
                         snippet,
                     )
 
+        # ── Pattern 1b: const q = `SELECT ... ${user} ...` (not only inside query()) ──
+        if node.type == "TemplateLiteral" and node.expressions:
+            qtxt = _template_quasis_sql_text(node)
+            if any(kw in qtxt for kw in SQL_KEYWORDS):
+                for expr in node.expressions:
+                    if is_seed_source(expr) or references_tainted(expr, tainted):
+                        line = node.loc.start.line if node.loc else 1
+                        is_direct = is_seed_source(expr)
+                        conf = "HIGH" if is_direct else "MEDIUM"
+                        flow = "direct user input" if is_direct else "tainted variable"
+                        snippet = _real_snippet(code, line)
+                        _add_issue(
+                            "SQL_INJECTION", line, conf,
+                            f"SQL template literal interpolates {flow} — SQL injection risk. (confidence: {conf})",
+                            snippet,
+                        )
+                        break
+
         # ── Pattern 2: query/execute(`...${taintedVar}...`) ──────────────────
         if node.type == "CallExpression":
             callee_name = ""
@@ -119,7 +172,10 @@ def _detect_js_ast(code: str) -> List[Dict]:
             elif node.callee.type == "Identifier":
                 callee_name = node.callee.name
 
-            if callee_name.lower() in ("query", "execute", "run", "all", "get", "prepare"):
+            if callee_name.lower() in (
+                "query", "execute", "run", "all", "get", "prepare",
+                "raw",  # Sequelize / ORMs
+            ):
                 for arg in (node.arguments or []):
                     if arg.type == "TemplateLiteral" and arg.expressions:
                         for expr in arg.expressions:
@@ -135,6 +191,17 @@ def _detect_js_ast(code: str) -> List[Dict]:
                                     snippet,
                                 )
                                 break  # one issue per call arg
+
+                # ── Pattern 2b: db.query(dynamicSqlVar) — SQL built earlier, passed as identifier ──
+                args = node.arguments or []
+                if args and args[0].type == "Identifier" and references_tainted(args[0], tainted):
+                    line = node.loc.start.line if node.loc else 1
+                    snippet = _real_snippet(code, line)
+                    _add_issue(
+                        "SQL_INJECTION", line, "MEDIUM",
+                        "Database API called with a tainted SQL string — likely built from user input; use parameterized queries. (confidence: MEDIUM)",
+                        snippet,
+                    )
 
     walk(tree, visit)
     return issues

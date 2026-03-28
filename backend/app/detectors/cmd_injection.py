@@ -22,12 +22,7 @@ Python -> regex-based:
 import re
 from typing import List, Dict, Set
 
-try:
-    import esprima
-    ESPRIMA_AVAILABLE = True
-except ImportError:
-    ESPRIMA_AVAILABLE = False
-
+from app.detectors.js_parse import parse_js
 from app.detectors.taint import build_taint_set, walk, references_tainted, is_seed_source
 
 
@@ -112,12 +107,8 @@ def _real_snippet(code: str, line: int) -> str:
 
 
 def _detect_js_ast(code: str) -> List[Dict]:
-    if not ESPRIMA_AVAILABLE:
-        return _detect_js_regex(code)
-
-    try:
-        tree = esprima.parseScript(code, tolerant=True, loc=True)
-    except Exception:
+    tree = parse_js(code)
+    if tree is None:
         return _detect_js_regex(code)
 
     tainted, _ = build_taint_set(tree)

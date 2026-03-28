@@ -10,14 +10,19 @@ Flow:
   5. Return AnalyzeResponse
 """
 
+import logging
+import uuid
+
 from fastapi import APIRouter
+
+log = logging.getLogger(__name__)
 from app.models.schemas import (
     AnalyzeRequest, AnalyzeResponse,
     Issue, Simulation, AIPlaceholder,
     FixRequest, FixResponse,
     SimulateRequest, SimulateResponse
 )
-from app.services.scanner import run_scan, SUPPORTED_LANGUAGES
+from app.services.scanner import run_scan, SUPPORTED_LANGUAGES, normalize_language
 from app.services.simulator import get_simulation
 from app.services.gemini_ai import (
     get_ai_explanation, get_ai_fix_code, get_ai_simulation_result
@@ -102,7 +107,8 @@ DEFAULT_AI = AIPlaceholder(
 
 @router.post("/analyze", response_model=AnalyzeResponse)
 def analyze(request: AnalyzeRequest):
-    lang = request.language.lower()
+    # Must match run_scan: TS/TSX/JSX scan as javascript (extension sends "typescript" for .ts)
+    lang = normalize_language(request.language)
 
     # ── Unsupported language ──────────────────────────────────────────────────
     if lang not in SUPPORTED_LANGUAGES:
@@ -114,27 +120,46 @@ def analyze(request: AnalyzeRequest):
     # ── Enrich ────────────────────────────────────────────────────────────────
     enriched: list[Issue] = []
     for raw in raw_issues:
-        sim_data = get_simulation(raw["type"])
-
-        # Live Gemini explanation — falls back silently on any error
-        ai_data = get_ai_explanation(
-            vuln_type=raw["type"],
-            code_snippet=raw.get("code_snippet", ""),
-            message=raw["message"],
-            language=lang,
-        )
-
-        enriched.append(Issue(
-            id=raw["id"],
-            type=raw["type"],
-            line=raw["line"],
-            severity=raw["severity"],
-            confidence=raw.get("confidence", "HIGH"),
-            message=raw["message"],
-            code_snippet=raw["code_snippet"],
-            simulation=Simulation(**sim_data),
-            ai=AIPlaceholder(**ai_data),
-        ))
+        vuln_type = raw.get("type", "UNKNOWN")
+        sim_data = get_simulation(vuln_type)
+        try:
+            ai_data = get_ai_explanation(
+                vuln_type=vuln_type,
+                code_snippet=raw.get("code_snippet", "") or "",
+                message=raw.get("message", ""),
+                language=request.language.lower(),
+            )
+            if not isinstance(ai_data, dict):
+                ai_data = {"explanation": DEFAULT_AI.explanation, "fix": DEFAULT_AI.fix}
+            ai_placeholder = AIPlaceholder(
+                explanation=str(ai_data.get("explanation", DEFAULT_AI.explanation)),
+                fix=str(ai_data.get("fix", DEFAULT_AI.fix)),
+            )
+            enriched.append(Issue(
+                id=raw.get("id") or str(uuid.uuid4()),
+                type=vuln_type,
+                line=int(raw.get("line", 1)),
+                severity=str(raw.get("severity", "MEDIUM")),
+                confidence=str(raw.get("confidence", "HIGH")),
+                message=str(raw.get("message", "")),
+                code_snippet=str(raw.get("code_snippet", "") or "(no snippet)"),
+                simulation=Simulation(**sim_data),
+                ai=ai_placeholder,
+            ))
+        except Exception:
+            log.exception("Enrich failed for issue type=%s — using static AI/sim defaults", vuln_type)
+            mock_ai = AI_MOCKS.get(vuln_type, DEFAULT_AI)
+            enriched.append(Issue(
+                id=raw.get("id") or str(uuid.uuid4()),
+                type=vuln_type,
+                line=int(raw.get("line", 1)),
+                severity=str(raw.get("severity", "MEDIUM")),
+                confidence=str(raw.get("confidence", "HIGH")),
+                message=str(raw.get("message", "")),
+                code_snippet=str(raw.get("code_snippet", "") or "(no snippet)"),
+                simulation=Simulation(**sim_data),
+                ai=mock_ai,
+            ))
 
     # ── Score ─────────────────────────────────────────────────────────────────
     score = 100

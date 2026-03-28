@@ -11,17 +11,25 @@ from app.detectors import sql_injection, xss, secrets, path_traversal, cmd_injec
 
 SUPPORTED_LANGUAGES = {"javascript", "python"}
 
+_JS_FAMILY = frozenset(
+    {"typescript", "ts", "tsx", "jsx", "javascriptreact", "typescriptreact"}
+)
+
+
+def normalize_language(language: str) -> str:
+    """Map TS/JS dialects to javascript for scanning; leave python unchanged."""
+    lang = language.lower()
+    if lang in _JS_FAMILY:
+        return "javascript"
+    return lang
+
 
 def run_scan(code: str, language: str) -> List[Dict]:
     """
     Run all applicable detectors for the given language.
     Returns combined list of raw issues.
     """
-    lang = language.lower()
-    
-    # Map React/TypeScript to JavaScript for AST parsing
-    if lang in ["typescript", "ts", "tsx", "jsx", "javascriptreact", "typescriptreact"]:
-        lang = "javascript"
+    lang = normalize_language(language)
 
     raw: List[Dict] = []
 

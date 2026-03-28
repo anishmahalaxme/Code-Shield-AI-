@@ -1,12 +1,15 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 
 
 # ── Request ───────────────────────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     code: str
     language: str  # "javascript" | "python" | anything else
+    filename: Optional[str] = None  # optional — sent by VS Code extension
 
 
 class FixRequest(BaseModel):

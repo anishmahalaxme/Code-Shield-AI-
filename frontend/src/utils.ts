@@ -1,3 +1,5 @@
+import * as path from 'path';
+
 export function debounce<T extends (...args: any[]) => void>(
   func: T,
   wait: number
@@ -13,16 +15,33 @@ export function debounce<T extends (...args: any[]) => void>(
   };
 }
 
-export const getLanguageId = (filename: string): string => {
-  const ext = filename.split('.').pop()?.toLowerCase();
+/** Map VS Code language ids to backend analyze language. */
+const VSCODE_TO_BACKEND: Record<string, string> = {
+  javascript: 'javascript',
+  javascriptreact: 'javascript',
+  typescript: 'typescript',
+  typescriptreact: 'typescript',
+  python: 'python',
+};
+
+/**
+ * Language id for POST /analyze. Uses file extension first; if unknown (e.g. Untitled buffers),
+ * falls back to VS Code's `document.languageId` so scans still run.
+ */
+export function getLanguageId(filename: string, vscodeLanguageId?: string): string {
+  const ext = path.extname(filename || '').replace(/^\./, '').toLowerCase();
   switch (ext) {
     case 'js':
     case 'jsx':
+    case 'mjs':
+    case 'cjs':
       return 'javascript';
     case 'ts':
     case 'tsx':
       return 'typescript';
     case 'py':
+    case 'pyw':
+    case 'pyi':
       return 'python';
     case 'java':
       return 'java';
@@ -47,6 +66,13 @@ export const getLanguageId = (filename: string): string => {
     case 'html':
       return 'html';
     default:
-      return 'text';
+      break;
   }
-};
+  if (vscodeLanguageId) {
+    const mapped = VSCODE_TO_BACKEND[vscodeLanguageId.toLowerCase()];
+    if (mapped) {
+      return mapped;
+    }
+  }
+  return 'text';
+}

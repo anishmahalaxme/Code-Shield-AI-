@@ -9,9 +9,13 @@ Maintains the exact same interface `get_ai_explanation` for analyze.py.
 
 import os
 import logging
+from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+# backend/.env (works no matter what cwd uvicorn was started from)
+_BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 # ── Import Groq SDK ───────────────────────────────────────────────────────────
 try:
@@ -24,6 +28,7 @@ except ImportError:
 
 # ── Configure ─────────────────────────────────────────────────────────────────
 if _SDK_AVAILABLE:
+    load_dotenv(_BACKEND_ENV)
     load_dotenv()
     
 _API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -38,9 +43,8 @@ else:
         log.warning("GROQ_API_KEY not set — AI disabled.")
 
 _MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama3-8b-8192",
-    "mixtral-8x7b-32768",
+    "llama-3.3-70b-versatile",   # Primary: Llama 3.3 70B (fast, high-quality)
+    "llama-3.1-8b-instant",      # Fallback: Llama 3.1 8B (fast, rate-limit resilient)
 ]
 
 # ── Fallbacks ─────────────────────────────────────────────────────────────────

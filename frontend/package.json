@@ -1,9 +1,15 @@
 {
-  "name": "codeshield",
-  "displayName": "CodeShield – AI Secure Coding Assistant",
+  "name": "codeshield-ai-security",
+  "displayName": "CodeShield Security",
   "description": "Real-time vulnerability detection powered by AI",
-  "version": "0.1.0",
-  "publisher": "codeshield-team",
+  "version": "0.1.4",
+  "publisher": "AnishMahalaxme",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anishmahalaxme/Code-Shield-AI-"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -28,7 +34,26 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "CodeShield",
+      "properties": {
+        "codeshield.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Base URL of the CodeShield API (uvicorn). Start it from the repo: backend/start.sh. If NO API persists, confirm this URL matches where the server listens."
+        },
+        "codeshield.autoStartBackend": {
+          "type": "boolean",
+          "default": true,
+          "description": "If the API is down, automatically run backend/start.sh when the workspace folder contains backend/app/main.py (this repo)."
+        }
+      }
+    },
     "commands": [
+      {
+        "command": "codeshield.pingApi",
+        "title": "CodeShield: Test API Connection"
+      },
       {
         "command": "codeshield.analyze",
         "title": "Run CodeShield Scan"
@@ -63,9 +88,7 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },
-  "dependencies": {
-    "axios": "^1.6.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",

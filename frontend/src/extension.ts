@@ -1,13 +1,28 @@
 import * as vscode from 'vscode';
-import { analyzeCode, generateFix, Issue } from './apiClient';
+import { analyzeCode, configureApiClient, generateFix, Issue, normalizeBaseUrl, probeBackendBaseUrl } from './apiClient';
 import { updateDiagnostics, CODE_SHIELD_DIAGNOSTIC_SOURCE } from './diagnostics';
 import { CodeShieldHoverProvider } from './hoverProvider';
 import { CodeShieldSidebarProvider } from './sidebarProvider';
 import { CodeShieldFixProvider } from './fixProvider';
 import { debounce, getLanguageId } from './utils';
+import { resolveBackendUrl } from './backendLauncher';
 
-export function activate(context: vscode.ExtensionContext) {
+function backendUrlFromConfig(): string {
+    return vscode.workspace.getConfiguration('codeshield').get<string>('backendUrl', 'http://127.0.0.1:8000')
+        ?? 'http://127.0.0.1:8000';
+}
+
+export async function activate(context: vscode.ExtensionContext) {
     console.log('CodeShield extension is now active!');
+
+    const outputChannel = vscode.window.createOutputChannel('CodeShield');
+    const extVersion = context.extension.packageJSON.version as string;
+    outputChannel.appendLine(
+        `[CodeShield] Extension v${extVersion} (loopback via Node http — reload window after install from this repo).`
+    );
+
+    const configuredBackend = backendUrlFromConfig();
+    configureApiClient(configuredBackend);
 
     // Setup StatusBar Item
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -28,9 +43,12 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     const sidebarProvider = new CodeShieldSidebarProvider(context.extensionUri);
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(CodeShieldSidebarProvider.viewType, sidebarProvider)
-    );
+    if (!(globalThis as any)._codeshieldSidebarRegistered) {
+        (globalThis as any)._codeshieldSidebarRegistered = true;
+        context.subscriptions.push(
+            vscode.window.registerWebviewViewProvider(CodeShieldSidebarProvider.viewType, sidebarProvider)
+        );
+    }
 
     const fixProvider = new CodeShieldFixProvider();
     context.subscriptions.push(
@@ -45,14 +63,39 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem.text = '$(sync~spin) CodeShield: SCANNING';
         statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
 
-        const language = getLanguageId(document.fileName);
+        const language = getLanguageId(document.fileName, document.languageId);
         const code = document.getText();
 
-        const response = await analyzeCode({
+        let response = await analyzeCode({
             language,
             filename: document.fileName,
             code
         });
+
+        if (response.apiError) {
+            const autoStart = vscode.workspace.getConfiguration('codeshield').get<boolean>('autoStartBackend', true);
+            const recovered = await resolveBackendUrl(outputChannel, backendUrlFromConfig(), !!autoStart);
+            if (recovered) {
+                configureApiClient(recovered);
+                response = await analyzeCode({
+                    language,
+                    filename: document.fileName,
+                    code
+                });
+            }
+        }
+
+        if (response.apiError) {
+            diagnosticCollection.delete(document.uri);
+            hoverProvider.updateIssues(document.uri, []);
+            fixProvider.updateIssues(document.uri, []);
+            sidebarProvider.updateData({ score: 100, issues: [] });
+            statusBarItem.text = '$(plug) CodeShield: NO API';
+            statusBarItem.color = new vscode.ThemeColor('statusBarItem.errorBackground');
+            statusBarItem.tooltip = response.apiError;
+            outputChannel.appendLine(`[scan] ${response.apiError}`);
+            return;
+        }
 
         updateDiagnostics(document, diagnosticCollection, response.issues);
         hoverProvider.updateIssues(document.uri, response.issues);
@@ -68,7 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    const debouncedScan = debounce(performScan, 3000);
+    const debouncedScan = debounce(performScan, 1200);
 
     // Register Event Listeners
     context.subscriptions.push(
@@ -79,11 +122,46 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(document => {
-            debouncedScan(document);
+            void performScan(document);
         })
     );
 
     // Register Commands
+    const pingApiCommand = vscode.commands.registerCommand('codeshield.pingApi', async () => {
+        const configured = backendUrlFromConfig();
+        const found = await probeBackendBaseUrl([
+            configured,
+            'http://127.0.0.1:8000',
+            'http://localhost:8000',
+            'http://[::1]:8000',
+        ]);
+        if (found) {
+            configureApiClient(found);
+            outputChannel.appendLine(`[ping] OK — ${found}`);
+            vscode.window.showInformationMessage(`CodeShield: API OK at ${found}`);
+            if (vscode.window.activeTextEditor) {
+                void performScan(vscode.window.activeTextEditor.document);
+            }
+        } else {
+            const tryStart = vscode.workspace.getConfiguration('codeshield').get<boolean>('autoStartBackend', true);
+            const recovered = await resolveBackendUrl(outputChannel, configured, !!tryStart);
+            if (recovered) {
+                configureApiClient(recovered);
+                outputChannel.appendLine(`[ping] OK after auto-start — ${recovered}`);
+                vscode.window.showInformationMessage(`CodeShield: API OK at ${recovered}`);
+                if (vscode.window.activeTextEditor) {
+                    void performScan(vscode.window.activeTextEditor.document);
+                }
+            } else {
+                outputChannel.appendLine('[ping] FAILED — no response on port 8000.');
+                vscode.window.showErrorMessage(
+                    'CodeShield: API not found. Open the Code Shield repo as workspace, or run backend/start.sh.'
+                );
+            }
+        }
+    });
+    context.subscriptions.push(pingApiCommand);
+
     const analyzeCommand = vscode.commands.registerCommand('codeshield.analyze', () => {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
@@ -99,7 +177,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             vscode.window.showInformationMessage(`🤖 CodeShield: Generating fix for ${issue.type}...`);
             const fixedCode = await generateFix({
-                language: getLanguageId(document.fileName),
+                language: getLanguageId(document.fileName, document.languageId),
                 code_snippet: issue.code_snippet,
                 issue_type: issue.type,
                 message: issue.message
@@ -124,10 +202,47 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(applyFixCommand);
+    context.subscriptions.push(outputChannel);
 
-    // Initial scan if there's an active editor
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('codeshield.backendUrl')) {
+                configureApiClient(backendUrlFromConfig());
+                if (vscode.window.activeTextEditor) {
+                    void performScan(vscode.window.activeTextEditor.document);
+                }
+            }
+        })
+    );
+
+    const autoStart = vscode.workspace.getConfiguration('codeshield').get<boolean>('autoStartBackend', true);
+    let foundUrl = await probeBackendBaseUrl([
+        configuredBackend,
+        'http://127.0.0.1:8000',
+        'http://localhost:8000',
+        'http://[::1]:8000',
+    ]);
+    if (!foundUrl) {
+        foundUrl = await resolveBackendUrl(outputChannel, configuredBackend, !!autoStart);
+    }
+    if (foundUrl) {
+        if (normalizeBaseUrl(foundUrl) !== normalizeBaseUrl(configuredBackend)) {
+            outputChannel.appendLine(
+                `[CodeShield] API reachable at ${foundUrl} (settings: ${configuredBackend}).`
+            );
+        }
+        configureApiClient(foundUrl);
+    } else {
+        outputChannel.appendLine(
+            '[CodeShield] API not reachable. Open this repo as a workspace folder, or run backend/start.sh, then "CodeShield: Test API Connection".'
+        );
+        outputChannel.appendLine(
+            '[CodeShield] Remote-SSH/WSL: run the API in that environment or set codeshield.backendUrl.'
+        );
+    }
+
     if (vscode.window.activeTextEditor) {
-        debouncedScan(vscode.window.activeTextEditor.document);
+        void performScan(vscode.window.activeTextEditor.document);
     }
 }
 
