@@ -2,7 +2,7 @@
   "name": "codeshield-ai-security",
   "displayName": "CodeShield Security",
   "description": "Real-time vulnerability detection powered by AI",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "publisher": "AnishMahalaxme",
   "icon": "media/icon.png",
   "license": "MIT",

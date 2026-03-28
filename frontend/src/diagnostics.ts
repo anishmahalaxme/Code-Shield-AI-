@@ -9,7 +9,6 @@ export function updateDiagnostics(
     issues: Issue[]
 ): void {
     if (document) {
-        collection.clear();
         const diagnostics: vscode.Diagnostic[] = [];
 
         issues.forEach((issue) => {

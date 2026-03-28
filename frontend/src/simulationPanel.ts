@@ -83,6 +83,7 @@ export class SimulationPanel {
         if (result) {
           this._panel.webview.postMessage({
             type: 'simResult',
+            vulnType: this._issue.type,
             query: result.query,
             attackResult: result.attack_result,
             attackClass: result.attack_class,
@@ -243,7 +244,7 @@ textarea::placeholder { color: #6b7280; }
     <div class="sug-wrap" id="sugs"></div>
   </div>
 
-  <button class="btn-run" id="btn">⚡ Run Simulation</button>
+  <button class="btn-run" id="btn">⚡ Simulate Attack</button>
 
   <div id="resWrap" class="card" style="display:none">
     <div id="classTag"></div>
@@ -251,6 +252,21 @@ textarea::placeholder { color: #6b7280; }
     <div class="pbox" id="q"></div>
     <div class="card-title">Execution Result</div>
     <div class="pbox" id="res"></div>
+
+    <!-- Decoded view placeholder -->
+    <div id="decodedWrap" style="display:none; margin-top: -16px; margin-bottom: 24px; padding: 12px; background: #1a1a1a; border: 1px dashed #4b5563; border-radius: 6px;">
+      <div style="font-size:12px; font-weight:700; text-transform:uppercase; color:#9ca3af; margin-bottom:8px;">Decoded from exfiltrated payload</div>
+      <div class="pbox" id="decodedText" style="margin-bottom:0; font-family:var(--vscode-editor-font-family, monospace); background:#111; border:1px solid #333;"></div>
+    </div>
+
+    <!-- Reason placeholder -->
+    <div id="reasonWrap" style="display:none; margin-bottom: 24px; padding: 12px; background: #2d2d2d; border-radius: 6px; border-left: 3px solid #f59e0b; color: #d1d5db; font-size: 14px;">
+      <div style="font-weight:700; color:#fff; margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+        <span>🧠</span> Reason
+      </div>
+      <div id="reasonText" style="line-height:1.5;"></div>
+    </div>
+
     <div class="card-title" style="margin-top:24px">Impact Analysis</div>
     <ul class="impact-list" id="im"></ul>
   </div>
@@ -277,7 +293,7 @@ textarea::placeholder { color: #6b7280; }
     var btn = document.getElementById('btn');
     if (btn.classList.contains('loading')) return;
     btn.classList.add('loading');
-    btn.textContent = 'Running Simulation...';
+    btn.textContent = 'Simulating Attack...';
 
     var resWrap = document.getElementById('resWrap');
     resWrap.style.display = 'block';
@@ -301,7 +317,7 @@ textarea::placeholder { color: #6b7280; }
 
     var btn = document.getElementById('btn');
     btn.classList.remove('loading');
-    btn.textContent = '⚡ Run Simulation';
+    btn.textContent = '⚡ Simulate Attack';
 
     var classTag = document.getElementById('classTag');
     classTag.className = 'badge fade-in ' + (d.isAttack ? 'attack' : 'safe');
@@ -314,6 +330,58 @@ textarea::placeholder { color: #6b7280; }
     var resEl = document.getElementById('res');
     resEl.className = 'pbox fade-in';
     resEl.textContent = d.attackResult;
+
+    var rw = document.getElementById('reasonWrap');
+    var rt = document.getElementById('reasonText');
+    var dw = document.getElementById('decodedWrap');
+    var dt = document.getElementById('decodedText');
+    rw.style.display = 'none';
+    dw.style.display = 'none';
+
+    if (d.isAttack) {
+      rw.style.display = 'block';
+      var typeLow = (d.vulnType || '').toLowerCase();
+      if (typeLow.includes('xss') || typeLow.includes('cross')) {
+        rt.textContent = "User input was directly inserted into the DOM using unsafe methods (like innerHTML), allowing execution of injected scripts.";
+      } else if (typeLow.includes('sql')) {
+        rt.textContent = "User-controlled input was concatenated directly into the SQL query without sanitization or parameterization.";
+      } else if (typeLow.includes('secret') || typeLow.includes('hardcoded')) {
+        rt.textContent = "Sensitive credentials are stored directly in source code, making them accessible via repository access or logs.";
+      } else {
+        rt.textContent = "Unsanitized user input allowed the attacker to alter the intended logic of the application.";
+      }
+
+      if (typeLow.includes('xss') || typeLow.includes('cross')) {
+        dw.style.display = 'block';
+        if (d.attackResult) {
+          var candidates = [];
+          var urlMatch = d.attackResult.match(/[?&][a-zA-Z0-9_]+=([^&\\s"']+)/);
+          if (urlMatch) candidates.push(urlMatch[1]);
+          var words = d.attackResult.match(/[A-Za-z0-9+\\/=_\\-]{16,}/g) || [];
+          candidates = candidates.concat(words);
+          
+          var decodedStr = "";
+          for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i].replace(/-/g, '+').replace(/_/g, '/');
+            var pad = candidate.length % 4;
+            if (pad === 2) candidate += '==';
+            else if (pad === 3) candidate += '=';
+            try {
+              var dec = atob(candidate);
+              var printable = dec.match(/[\\x20-\\x7E]/g);
+              if (printable && printable.length > dec.length * 0.7) {
+                if (decodedStr.indexOf(dec) === -1) {
+                  decodedStr += (decodedStr ? "\\n---\\n" : "") + dec;
+                }
+              }
+            } catch(e) {}
+          }
+          dt.textContent = decodedStr || "Unable to decode payload";
+        } else {
+          dt.textContent = "Unable to decode payload";
+        }
+      }
+    }
 
     var impactLines = [];
     if (d.impact) {

@@ -163,7 +163,7 @@ export class CodeShieldSidebarProvider implements vscode.WebviewViewProvider {
   <div class="icard" style="margin-bottom: 0; padding: 16px 20px;">
     <div class="btn-row" style="margin-top: 0;">
       <button class="btn-primary" style="background:${sev.color};color:#FFF;" data-action="autofix" data-idx="${i}">Auto-Fix Code</button>
-      <button class="btn-secondary" style="background:#0F4C81;color:#FFF;border:none;" data-action="opensb" data-idx="${i}">Sandbox</button>
+      <button class="btn-secondary" style="background:#0F4C81;color:#FFF;border:none;" data-action="opensb" data-idx="${i}">Run simulation</button>
     </div>
   </div>
 </div>`;
