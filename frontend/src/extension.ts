@@ -6,6 +6,7 @@ import { CodeShieldSidebarProvider } from './sidebarProvider';
 import { CodeShieldFixProvider } from './fixProvider';
 import { debounce, getLanguageId } from './utils';
 import { resolveBackendUrl } from './backendLauncher';
+import { localScan } from './localScanner';
 
 function backendUrlFromConfig(): string {
     return vscode.workspace.getConfiguration('codeshield').get<string>('backendUrl', 'http://127.0.0.1:8000')
@@ -86,14 +87,30 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         if (response.apiError) {
-            diagnosticCollection.delete(document.uri);
-            hoverProvider.updateIssues(document.uri, []);
-            fixProvider.updateIssues(document.uri, []);
-            sidebarProvider.updateData({ score: 100, issues: [] });
-            statusBarItem.text = '$(plug) CodeShield: NO API';
-            statusBarItem.color = new vscode.ThemeColor('statusBarItem.errorBackground');
+            // ── Offline fallback: run local regex scanner so users still see issues ──
+            const localResult = localScan(code, language);
+            sidebarProvider.updateData({
+                score: localResult.score,
+                issues: localResult.issues,
+                apiOffline: true,
+                apiError: response.apiError,
+                isLocalScan: true,
+            });
+            if (localResult.issues.length > 0) {
+                updateDiagnostics(document, diagnosticCollection, localResult.issues);
+                hoverProvider.updateIssues(document.uri, localResult.issues);
+                fixProvider.updateIssues(document.uri, localResult.issues);
+                statusBarItem.text = '$(warning) CodeShield: LOCAL SCAN';
+            } else {
+                diagnosticCollection.delete(document.uri);
+                hoverProvider.updateIssues(document.uri, []);
+                fixProvider.updateIssues(document.uri, []);
+                statusBarItem.text = '$(plug) CodeShield: NO API';
+            }
+            statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
             statusBarItem.tooltip = response.apiError;
             outputChannel.appendLine(`[scan] ${response.apiError}`);
+            startBackendPolling();
             return;
         }
 
@@ -109,6 +126,34 @@ export async function activate(context: vscode.ExtensionContext) {
             statusBarItem.text = '$(shield) CodeShield: SAFE';
             statusBarItem.color = new vscode.ThemeColor('testing.iconPassed');
         }
+    };
+
+    // ── Backend polling: auto-reconnect when API comes back online ──────────
+    let retryTimer: NodeJS.Timeout | undefined;
+    const startBackendPolling = () => {
+        if (retryTimer !== undefined) { return; } // already polling
+        outputChannel.appendLine('[CodeShield] Backend offline — polling every 15 s for reconnection.');
+        retryTimer = setInterval(async () => {
+            const found = await probeBackendBaseUrl([
+                backendUrlFromConfig(),
+                'http://127.0.0.1:8000',
+                'http://localhost:8000',
+                'http://[::1]:8000',
+            ]);
+            if (found) {
+                clearInterval(retryTimer);
+                retryTimer = undefined;
+                configureApiClient(found);
+                outputChannel.appendLine(`[CodeShield] Backend reconnected at ${found}.`);
+                vscode.window.showInformationMessage(`CodeShield: Backend reconnected ✅`);
+                if (vscode.window.activeTextEditor) {
+                    void performScan(vscode.window.activeTextEditor.document);
+                }
+            }
+        }, 15000);
+        context.subscriptions.push({
+            dispose: () => { if (retryTimer) { clearInterval(retryTimer); retryTimer = undefined; } }
+        });
     };
 
     const debouncedScan = debounce(performScan, 1200);

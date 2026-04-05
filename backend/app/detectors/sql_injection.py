@@ -74,9 +74,12 @@ def _detect_js_sql_heuristic(code: str) -> List[Dict]:
         low = line.lower()
         if not any(kw in low for kw in SQL_KEYWORDS):
             continue
-        risky = "${" in line or re.search(
-            r"['\"\`].*\b(?:select|insert|update|delete)\b.*['\"\`]\s*\+", low
-        )
+        # Pattern A: template literal  `SELECT ... ${expr}`
+        has_template = "${" in line and "`" in line
+        # Pattern B: SQL keyword + any concat with an identifier
+        # Catches both: "SELECT ..." + var  AND  "WHERE '" + var + "'"
+        has_concat = bool(re.search(r"\+\s*[a-zA-Z_$]", line))
+        risky = has_template or has_concat
         if not risky:
             continue
         key = (line_num, "SQL_INJECTION")

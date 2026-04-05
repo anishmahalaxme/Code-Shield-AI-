@@ -15,12 +15,14 @@ export function debounce<T extends (...args: any[]) => void>(
   };
 }
 
-/** Map VS Code language ids to backend analyze language. */
+/** Map VS Code language ids to backend analyze language.
+ *  Note: backend scanner.normalize_language() maps all TS dialects → 'javascript'.
+ *  We do the same here so the file-extension path and the languageId fallback agree. */
 const VSCODE_TO_BACKEND: Record<string, string> = {
   javascript: 'javascript',
   javascriptreact: 'javascript',
-  typescript: 'typescript',
-  typescriptreact: 'typescript',
+  typescript: 'javascript',       // backend normalises TS → JS for scanning
+  typescriptreact: 'javascript',  // same
   python: 'python',
 };
 

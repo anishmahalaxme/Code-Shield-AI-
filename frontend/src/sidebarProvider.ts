@@ -7,6 +7,9 @@ export class CodeShieldSidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private currentScore: number = 100;
     private currentIssues: Issue[] = [];
+    private apiOffline: boolean = false;
+    private apiError: string | undefined;
+    private isLocalScan: boolean = false;
 
     constructor(private readonly _extensionUri: vscode.Uri) { }
 
@@ -42,20 +45,31 @@ export class CodeShieldSidebarProvider implements vscode.WebviewViewProvider {
                 } else {
                     vscode.window.showErrorMessage('Please open the file associated with this vulnerability first.');
                 }
+            } else if (data.type === 'retryApi') {
+                vscode.commands.executeCommand('codeshield.pingApi');
             }
         });
         this.updateView();
     }
 
-    public updateData(response: AnalyzeResponse) {
+    public updateData(response: AnalyzeResponse & { apiOffline?: boolean; apiError?: string; isLocalScan?: boolean }) {
         this.currentScore = response.score;
         this.currentIssues = response.issues;
+        this.apiOffline = response.apiOffline ?? false;
+        this.apiError = response.apiError;
+        this.isLocalScan = response.isLocalScan ?? false;
         this.updateView();
     }
 
     private updateView() {
         if (this._view) {
-            this._view.webview.html = this.getHtmlForWebview(this.currentScore, this.currentIssues);
+            this._view.webview.html = this.getHtmlForWebview(
+                this.currentScore,
+                this.currentIssues,
+                this.apiOffline,
+                this.apiError,
+                this.isLocalScan
+            );
         }
     }
 
@@ -99,7 +113,7 @@ export class CodeShieldSidebarProvider implements vscode.WebviewViewProvider {
         `;
     }
 
-    private getHtmlForWebview(score: number, issues: Issue[]): string {
+    private getHtmlForWebview(score: number, issues: Issue[], apiOffline = false, apiError?: string, isLocalScan = false): string {
         const nonce = this.getNonce();
 
         // Native Semantic mapping
@@ -110,7 +124,10 @@ export class CodeShieldSidebarProvider implements vscode.WebviewViewProvider {
             low: { icon: '✅', color: '#22c55e' }
         };
 
-        const scC = score >= 80 ? 'var(--vscode-testing-iconPassed)' : score >= 50 ? '#f59e0b' : '#f43f5e';
+        // When offline & no issues: gray (unknown) — don't show misleading green
+        const scC = (apiOffline && issues.length === 0)
+            ? '#6b7280'
+            : score >= 80 ? 'var(--vscode-testing-iconPassed)' : score >= 50 ? '#f59e0b' : '#f43f5e';
 
         const cardsHtml = issues.map((issue, i) => {
             const sev = sevMap[issue.severity.toLowerCase()] || sevMap.medium;
@@ -293,7 +310,6 @@ body {
 }
 .btn-ghost:hover { color: var(--vscode-foreground); }
 
-/* ─── Safe State ─── */
 .safe-state { 
   background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
   border-radius: var(--cs-radius); padding: 40px 20px; text-align: center; 
@@ -301,6 +317,34 @@ body {
 .safe-icon { font-size: 40px; margin-bottom: 16px; }
 .safe-title { font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 8px; }
 .safe-sub { font-size: 14px; color: var(--vscode-descriptionForeground); line-height: 1.5; font-weight: 500; }
+
+/* ─── Offline Banner ─── */
+.offline-banner {
+  background: rgba(245,158,11,0.10);
+  border: 1px solid rgba(245,158,11,0.45);
+  border-radius: var(--cs-radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px;
+}
+.offline-banner-content { flex: 1; }
+.offline-banner-title { font-size: 13px; font-weight: 700; color: #f59e0b; margin-bottom: 2px; }
+.offline-banner-msg { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.4; }
+.btn-retry {
+  padding: 6px 14px; border-radius: var(--cs-pill);
+  border: 1px solid #f59e0b; background: transparent;
+  color: #f59e0b; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; white-space: nowrap; flex-shrink: 0;
+  transition: var(--cs-trans);
+}
+.btn-retry:hover { background: rgba(245,158,11,0.18); }
+.btn-retry-big {
+  margin-top: 20px; padding: 10px 24px; border-radius: var(--cs-pill);
+  border: 1px solid #f59e0b; background: transparent; color: #f59e0b;
+  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: var(--cs-trans);
+}
+.btn-retry-big:hover { background: rgba(245,158,11,0.18); }
 </style>
 </head>
 <body>
@@ -312,16 +356,31 @@ body {
       <!-- Circumference = 144.5 -->
       <circle class="score-circle-fg" id="scoreCircle" cx="26" cy="26" r="23" stroke="${scC}" stroke-dasharray="144.5" stroke-dashoffset="144.5"></circle>
     </svg>
-    <div class="score-text" style="color:${scC}">${score}</div>
+    <div class="score-text" style="color:${scC}">${apiOffline && issues.length === 0 ? '?' : score}</div>
   </div>
   <div class="score-info">
     <div class="score-title">Security Confidence</div>
-    <div class="score-sub">${issues.length} ${issues.length === 1 ? 'vulnerability' : 'vulnerabilities'} detected</div>
+    <div class="score-sub">${apiOffline && issues.length === 0 ? 'Backend offline — limited scan' : `${issues.length} ${issues.length === 1 ? 'vulnerability' : 'vulnerabilities'} detected${isLocalScan && issues.length > 0 ? ' (local scan)' : ''}`}</div>
   </div>
 </div>
 
+${apiOffline ? `
+<div class="offline-banner">
+  <div class="offline-banner-content">
+    <div class="offline-banner-title">⚠️ ${isLocalScan && issues.length > 0 ? 'Backend Offline — Local Scan Active' : 'Backend Offline'}</div>
+    <div class="offline-banner-msg">${isLocalScan && issues.length > 0 ? 'AI enrichment unavailable. These results are from local pattern matching (lower accuracy). Start the backend for full analysis.' : 'Cannot connect to the CodeShield backend. Start it from the repo, or set a remote URL in settings.'}</div>
+  </div>
+  <button class="btn-retry" id="btn-retry">↺ Retry</button>
+</div>` : ''}
+
 <div id="list">
-${issues.length ? cardsHtml : `
+${issues.length ? cardsHtml : apiOffline ? `
+<div class="safe-state" style="border-color:rgba(245,158,11,0.35);">
+  <div class="safe-icon">🔌</div>
+  <div class="safe-title" style="color:#f59e0b;">Backend Offline</div>
+  <div class="safe-sub">Local scan found no obvious vulnerabilities, but full analysis requires the CodeShield backend.<br><br>Start the backend or configure a remote URL in VS Code settings (<em>codeshield.backendUrl</em>).</div>
+  <button class="btn-retry-big" id="btn-retry-big">↺ Retry Connection</button>
+</div>` : `
 <div class="safe-state">
   <div class="safe-icon">✅</div>
   <div class="safe-title">All Systems Secure</div>
@@ -389,6 +448,18 @@ function toggleSim(i) {
     b.innerHTML = open ? 'Close details <span class="ico">▲</span>' : 'Open details <span class="ico">▼</span>';
   });
 }
+</script>
+
+<script nonce="${nonce}">
+// Retry button — both inline banner and big safe-state button
+(function() {
+  function bindRetry(id) {
+    var btn = document.getElementById(id);
+    if (btn) { btn.addEventListener('click', function() { vsc.postMessage({ type: 'retryApi' }); }); }
+  }
+  bindRetry('btn-retry');
+  bindRetry('btn-retry-big');
+})();
 </script>
 </body>
 </html>`;
