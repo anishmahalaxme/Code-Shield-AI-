@@ -15,15 +15,14 @@ CodeShield AI acts as your local, autonomous Application Security (AppSec) engin
 2. [How It Works (Under the Hood)](#-how-it-works-under-the-hood)
 3. [Supported Vulnerability Classes](#-supported-vulnerability-classes)
 4. [Folder Structure](#-folder-structure)
-5. [Getting Started (Local Installation)](#-getting-started-local-installation)
+5. [Getting Started (Installation)](#-getting-started-installation)
     * [Step 1: Install Python Backend](#step-1-install-python-backend)
     * [Step 2: Configure Environment Variable](#step-2-configure-environment-variable)
     * [Step 3: Run FastAPI Server](#step-3-run-fastapi-server)
     * [Step 4: Load Extension in VS Code](#step-4-load-extension-in-vs-code)
-6. [Production Deployment (Render)](#-production-deployment-render)
-7. [Usage Guide](#-usage-guide)
-8. [API Contract Specifications](#-api-contract-specifications)
-9. [Troubleshooting & FAQs](#-troubleshooting--faqs)
+6. [Usage Guide](#-usage-guide)
+7. [API Contract Specifications](#-api-contract-specifications)
+8. [Troubleshooting & FAQs](#-troubleshooting--faqs)
 
 ---
 
@@ -150,7 +149,7 @@ CodeShield AI/
 
 ---
 
-## 🚀 Getting Started (Local Installation)
+## 🚀 Getting Started (Installation)
 
 Follow these steps to run the complete CodeShield engine locally.
 
@@ -203,28 +202,6 @@ You can install the pre-compiled Extension package directly:
 ```bash
 code --install-extension frontend/codeshield-ai-security-0.1.7.vsix
 ```
-
----
-
-## 🌐 Production Deployment (Render)
-
-Instead of requiring users to run the backend engine locally, you can deploy the FastAPI service for free on **Render** to run permanently:
-
-1. Push your repository changes to your **GitHub** account.
-2. Log in to the [Render Dashboard](https://render.com/).
-3. Click **New +** and select **Web Service**.
-4. Connect the GitHub repository containing CodeShield AI.
-5. Configure the build and start commands as follows:
-   * **Name:** `codeshield-backend` (or a name of your choice)
-   * **Runtime:** `Python`
-   * **Build Command:** `pip install -r backend/requirements.txt`
-   * **Start Command:** `cd backend && uvicorn app.main:app --host 0.0.0.0 --port 10000`
-6. Add the following environment variable in the **Advanced** section:
-   * **Key:** `GROQ_API_KEY`
-   * **Value:** `gsk_your_actual_groq_api_key_here`
-7. Click **Create Web Service**. Your API will build and deploy to a public URL (e.g., `https://codeshield-backend.onrender.com`).
-
-> **Note:** Once deployed, make sure to update the default `codeshield.backendUrl` inside `frontend/package.json` with your new public URL so extension users connect to it automatically.
 
 ---
 
