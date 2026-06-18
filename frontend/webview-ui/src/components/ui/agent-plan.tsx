@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import {
     CheckCircle2,
     Circle,
@@ -306,7 +306,7 @@ export default function Plan() {
     };
 
     // Animation variants with reduced motion support
-    const taskVariants = {
+    const taskVariants: any = {
         hidden: {
             opacity: 0,
             y: prefersReducedMotion ? 0 : -5
@@ -328,7 +328,7 @@ export default function Plan() {
         }
     };
 
-    const subtaskListVariants = {
+    const subtaskListVariants: any = {
         hidden: {
             opacity: 0,
             height: 0,
@@ -356,7 +356,7 @@ export default function Plan() {
         }
     };
 
-    const subtaskVariants = {
+    const subtaskVariants: any = {
         hidden: {
             opacity: 0,
             x: prefersReducedMotion ? 0 : -10
@@ -378,7 +378,7 @@ export default function Plan() {
         }
     };
 
-    const subtaskDetailsVariants = {
+    const subtaskDetailsVariants: any = {
         hidden: {
             opacity: 0,
             height: 0,
@@ -396,7 +396,7 @@ export default function Plan() {
     };
 
     // Status badge animation variants
-    const statusBadgeVariants = {
+    const statusBadgeVariants: any = {
         initial: { scale: 1 },
         animate: {
             scale: prefersReducedMotion ? 1 : [1, 1.08, 1],

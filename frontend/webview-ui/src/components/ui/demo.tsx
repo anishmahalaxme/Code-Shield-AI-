@@ -1,6 +1,6 @@
 "use client";
 
-import Plan from "@/components/ui/agent-plan";
+import Plan from "./agent-plan";
 
 export function Demo() {
     return (

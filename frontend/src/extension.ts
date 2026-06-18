@@ -25,6 +25,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const configuredBackend = backendUrlFromConfig();
     configureApiClient(configuredBackend);
 
+    const scanResultsCache = new Map<string, { score: number; issues: Issue[]; apiOffline?: boolean; apiError?: string; isLocalScan?: boolean }>();
+
     // Setup StatusBar Item
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.text = '$(shield) CodeShield: SAFE';
@@ -61,8 +63,12 @@ export async function activate(context: vscode.ExtensionContext) {
     const performScan = async (document: vscode.TextDocument) => {
         if (document.languageId === 'Log' || document.uri.scheme !== 'file') return;
 
-        statusBarItem.text = '$(sync~spin) CodeShield: SCANNING';
-        statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
+        const isActive = document === vscode.window.activeTextEditor?.document;
+
+        if (isActive) {
+            statusBarItem.text = '$(sync~spin) CodeShield: SCANNING';
+            statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
+        }
 
         const language = getLanguageId(document.fileName, document.languageId);
         const code = document.getText();
@@ -89,42 +95,58 @@ export async function activate(context: vscode.ExtensionContext) {
         if (response.apiError) {
             // ── Offline fallback: run local regex scanner so users still see issues ──
             const localResult = localScan(code, language);
-            sidebarProvider.updateData({
+            const cachedResult = {
                 score: localResult.score,
                 issues: localResult.issues,
                 apiOffline: true,
                 apiError: response.apiError,
                 isLocalScan: true,
-            });
+            };
+            scanResultsCache.set(document.uri.toString(), cachedResult);
+
+            if (isActive) {
+                sidebarProvider.updateData(cachedResult);
+            }
             if (localResult.issues.length > 0) {
                 updateDiagnostics(document, diagnosticCollection, localResult.issues);
                 hoverProvider.updateIssues(document.uri, localResult.issues);
                 fixProvider.updateIssues(document.uri, localResult.issues);
-                statusBarItem.text = '$(warning) CodeShield: LOCAL SCAN';
+                if (isActive) {
+                    statusBarItem.text = '$(warning) CodeShield: LOCAL SCAN';
+                }
             } else {
                 diagnosticCollection.delete(document.uri);
                 hoverProvider.updateIssues(document.uri, []);
                 fixProvider.updateIssues(document.uri, []);
-                statusBarItem.text = '$(plug) CodeShield: NO API';
+                if (isActive) {
+                    statusBarItem.text = '$(plug) CodeShield: NO API';
+                }
             }
-            statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
-            statusBarItem.tooltip = response.apiError;
+            if (isActive) {
+                statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningBackground');
+                statusBarItem.tooltip = response.apiError;
+            }
             outputChannel.appendLine(`[scan] ${response.apiError}`);
             startBackendPolling();
             return;
         }
 
+        scanResultsCache.set(document.uri.toString(), response);
+
         updateDiagnostics(document, diagnosticCollection, response.issues);
         hoverProvider.updateIssues(document.uri, response.issues);
         fixProvider.updateIssues(document.uri, response.issues);
-        sidebarProvider.updateData(response);
 
-        if (response.issues.length > 0) {
-            statusBarItem.text = '$(shield) CodeShield: RISK';
-            statusBarItem.color = new vscode.ThemeColor('testing.iconFailed');
-        } else {
-            statusBarItem.text = '$(shield) CodeShield: SAFE';
-            statusBarItem.color = new vscode.ThemeColor('testing.iconPassed');
+        if (isActive) {
+            sidebarProvider.updateData(response);
+
+            if (response.issues.length > 0) {
+                statusBarItem.text = '$(shield) CodeShield: RISK';
+                statusBarItem.color = new vscode.ThemeColor('testing.iconFailed');
+            } else {
+                statusBarItem.text = '$(shield) CodeShield: SAFE';
+                statusBarItem.color = new vscode.ThemeColor('testing.iconPassed');
+            }
         }
     };
 
@@ -168,6 +190,33 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(document => {
             void performScan(document);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor) {
+                const cached = scanResultsCache.get(editor.document.uri.toString());
+                if (cached) {
+                    sidebarProvider.updateData(cached);
+                    if (cached.issues.length > 0) {
+                        statusBarItem.text = cached.isLocalScan ? '$(warning) CodeShield: LOCAL SCAN' : '$(shield) CodeShield: RISK';
+                        statusBarItem.color = new vscode.ThemeColor(cached.isLocalScan ? 'statusBarItem.warningBackground' : 'testing.iconFailed');
+                    } else {
+                        statusBarItem.text = cached.isLocalScan ? '$(plug) CodeShield: NO API' : '$(shield) CodeShield: SAFE';
+                        statusBarItem.color = new vscode.ThemeColor(cached.isLocalScan ? 'statusBarItem.warningBackground' : 'testing.iconPassed');
+                    }
+                } else {
+                    void performScan(editor.document);
+                }
+            } else {
+                sidebarProvider.updateData({
+                    score: 100,
+                    issues: []
+                });
+                statusBarItem.text = '$(shield) CodeShield: SAFE';
+                statusBarItem.color = new vscode.ThemeColor('testing.iconPassed');
+            }
         })
     );
 
