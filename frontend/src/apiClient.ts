@@ -237,7 +237,7 @@ export async function analyzeCode(request: AnalyzeRequest): Promise<AnalyzeResul
   const base = backendBaseUrl;
 
   const doPost = async (urlBase: string): Promise<AnalyzeResult> => {
-    const data = await jsonPost<AnalyzeResponse>(`${urlBase}/analyze`, request, 15000);
+    const data = await jsonPost<AnalyzeResponse>(`${urlBase}/analyze`, request, 60000);
     return { ...data };
   };
 
@@ -269,7 +269,7 @@ export async function analyzeCode(request: AnalyzeRequest): Promise<AnalyzeResul
 
 export async function generateFix(request: FixRequest): Promise<string | null> {
   try {
-    const data = await jsonPost<{ fixed_code: string }>(`${backendBaseUrl}/fix`, request, 15000);
+    const data = await jsonPost<{ fixed_code: string }>(`${backendBaseUrl}/fix`, request, 60000);
     return data.fixed_code;
   } catch (error) {
     console.error("CodeShield API Error (Fix):", error);
@@ -279,7 +279,7 @@ export async function generateFix(request: FixRequest): Promise<string | null> {
 
 export async function simulateExploit(request: SimulateRequest): Promise<SimulateResponse | null> {
   try {
-    return await jsonPost<SimulateResponse>(`${backendBaseUrl}/simulate`, request, 20000);
+    return await jsonPost<SimulateResponse>(`${backendBaseUrl}/simulate`, request, 60000);
   } catch (error) {
     console.error("CodeShield API Error (Simulate):", error);
     return null;
